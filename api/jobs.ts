@@ -1,13 +1,26 @@
 import * as cheerio from 'cheerio';
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 
-import {
-  TIME_WINDOWS,
-  type FetchStats,
-  type Job,
-  type SearchResponse,
-  type TimeWindow,
-} from '../src/lib/types';
+// Type-only, and deliberately so: Vercel transpiles this file without bundling
+// it, so any *runtime* import of a module outside api/ fails to resolve once
+// deployed. Types are erased at compile time, which keeps the contract shared
+// without creating a runtime dependency.
+import type { FetchStats, Job, SearchResponse, TimeWindow } from '../src/lib/types';
+
+/**
+ * Seconds per look-back window. Typed against the shared `TimeWindow` union, so
+ * adding a window on the client without adding it here fails the build rather
+ * than silently falling back to an hour.
+ */
+const WINDOW_SECONDS: Record<TimeWindow, number> = {
+  '1h': 3600,
+  '2h': 7200,
+  '4h': 14400,
+  '8h': 28800,
+  '24h': 86400,
+};
+
+const isTimeWindow = (value: string): value is TimeWindow => value in WINDOW_SECONDS;
 
 /**
  * LinkedIn exposes an unauthenticated "guest" endpoint that backs the job list
@@ -232,8 +245,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse): 
     return;
   }
 
-  const windowKey = first(req.query['window']) as TimeWindow;
-  const seconds = TIME_WINDOWS[windowKey] ?? TIME_WINDOWS['1h'];
+  const windowKey = first(req.query['window']);
+  const seconds = isTimeWindow(windowKey) ? WINDOW_SECONDS[windowKey] : WINDOW_SECONDS['1h'];
   const deadline = Date.now() + DEADLINE_MS;
   const stats: FetchStats = { requests: 0, full: 0, truncated: 0 };
   const seen = new Set<string>();
