@@ -1,3 +1,5 @@
+import type { FetchStats } from '@lib/types';
+
 /**
  * Adaptive rate control for an endpoint whose limits are undocumented.
  *
@@ -14,67 +16,39 @@
  * additive gains and aggressive multiplicative retreats.
  */
 
-const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+const clamp = (n: number, lo: number, hi: number): number => Math.min(hi, Math.max(lo, n));
 
-/**
- * Hard ceiling on outbound requests, independent of the interval logic.
- * The interval controls how often a *cycle* runs; this controls the burst
- * within one, so adding watches stretches cycles instead of multiplying load.
- */
-export class TokenBucket {
-  #capacity;
-  #tokens;
-  #refillPerMs;
-  #last;
+type Outcome = 'ok' | 'thin' | 'block';
 
-  constructor({ ratePerMin = 12, burst = 4 } = {}) {
-    this.#capacity = burst;
-    this.#tokens = burst;
-    this.#refillPerMs = ratePerMin / 60_000;
-    this.#last = Date.now();
-  }
+export interface GovernorSnapshot {
+  intervalMs: number;
+  minIntervalMs: number;
+  truncationRate: number;
+  pausedUntil: number | null;
+  atFloor: boolean;
+}
 
-  get ratePerMin() {
-    return this.#refillPerMs * 60_000;
-  }
-
-  setRatePerMin(rate) {
-    this.#refill();
-    this.#refillPerMs = rate / 60_000;
-  }
-
-  #refill() {
-    const now = Date.now();
-    this.#tokens = Math.min(this.#capacity, this.#tokens + (now - this.#last) * this.#refillPerMs);
-    this.#last = now;
-  }
-
-  /** Resolves once a request may be sent. */
-  async acquire() {
-    for (;;) {
-      this.#refill();
-      if (this.#tokens >= 1) {
-        this.#tokens -= 1;
-        return;
-      }
-      const waitMs = Math.ceil((1 - this.#tokens) / this.#refillPerMs);
-      await new Promise((r) => setTimeout(r, Math.min(waitMs, 5000)));
-    }
-  }
+export interface GovernorOptions {
+  minIntervalMs?: number;
+  maxIntervalMs?: number;
+  startIntervalMs?: number;
+  stepMs?: number;
+  backoffFactor?: number;
+  cleanCyclesToSpeedUp?: number;
 }
 
 export class RateGovernor {
-  #min;
-  #max;
-  #interval;
-  #stepMs;
-  #backoffFactor;
-  #cleanStreak;
+  readonly #min: number;
+  readonly #max: number;
+  readonly #stepMs: number;
+  readonly #backoffFactor: number;
+  readonly #cleanCyclesToSpeedUp: number;
+
+  #interval: number;
+  #cleanStreak = 0;
   #pausedUntil = 0;
   /** Rolling window of recent per-request outcomes. */
-  #recent = [];
-
-  bucket;
+  #recent: Outcome[] = [];
 
   constructor({
     minIntervalMs = 45_000,
@@ -83,34 +57,27 @@ export class RateGovernor {
     stepMs = 15_000,
     backoffFactor = 2,
     cleanCyclesToSpeedUp = 2,
-    requestsPerMin = 12,
-  } = {}) {
+  }: GovernorOptions = {}) {
     this.#min = minIntervalMs;
     this.#max = maxIntervalMs;
-    this.#interval = clamp(startIntervalMs, minIntervalMs, maxIntervalMs);
     this.#stepMs = stepMs;
     this.#backoffFactor = backoffFactor;
-    this.cleanCyclesToSpeedUp = cleanCyclesToSpeedUp;
-    this.#cleanStreak = 0;
-    this.bucket = new TokenBucket({ ratePerMin: requestsPerMin });
+    this.#cleanCyclesToSpeedUp = cleanCyclesToSpeedUp;
+    this.#interval = clamp(startIntervalMs, minIntervalMs, maxIntervalMs);
   }
 
-  /** Restore a previously-learned interval so a restart doesn't re-probe. */
-  restore(intervalMs) {
+  /** Restore a previously-learned interval so a reload doesn't re-probe. */
+  restore(intervalMs: number): void {
     if (Number.isFinite(intervalMs)) {
       this.#interval = clamp(intervalMs, this.#min, this.#max);
     }
   }
 
-  get intervalMs() {
+  get intervalMs(): number {
     return this.#interval;
   }
 
-  get pausedUntil() {
-    return this.#pausedUntil;
-  }
-
-  get isPaused() {
+  get isPaused(): boolean {
     return Date.now() < this.#pausedUntil;
   }
 
@@ -119,37 +86,25 @@ export class RateGovernor {
    * clean machine signature; a wobbling one is both stealthier and avoids
    * synchronising with any fixed-window counter on their side.
    */
-  nextDelayMs() {
-    const jitter = 0.85 + Math.random() * 0.3;
-    return Math.round(this.#interval * jitter);
+  nextDelayMs(): number {
+    const base = this.isPaused ? Math.max(this.#interval, this.#pausedUntil - Date.now()) : this.#interval;
+    return Math.round(base * (0.85 + Math.random() * 0.3));
   }
 
-  #note(outcome) {
+  #note(outcome: Outcome): void {
     this.#recent.push(outcome);
     if (this.#recent.length > 40) this.#recent.shift();
   }
 
-  /** A full, healthy page. */
-  recordSuccess() {
-    this.#note('ok');
-  }
-
-  /** A short body — the soft-throttle tell documented in linkedin.js. */
-  recordTruncated() {
-    this.#note('thin');
-  }
-
   /** A hard refusal: 429 or LinkedIn's 999. */
-  recordBlocked(retryAfterMs = 10 * 60_000) {
+  recordBlocked(retryAfterMs = 10 * 60_000): void {
     this.#note('block');
     this.#cleanStreak = 0;
     this.#interval = clamp(this.#interval * this.#backoffFactor, this.#min, this.#max);
     this.#pausedUntil = Date.now() + retryAfterMs;
-    // Halve throughput too — the interval alone doesn't bound a burst.
-    this.bucket.setRatePerMin(Math.max(2, this.bucket.ratePerMin / 2));
   }
 
-  get truncationRate() {
+  get truncationRate(): number {
     const window = this.#recent.slice(-20);
     if (window.length < 8) return 0;
     return window.filter((o) => o === 'thin').length / window.length;
@@ -159,7 +114,10 @@ export class RateGovernor {
    * Called once per completed cycle. Decides whether to probe faster or ease
    * off, based on what the cycle's requests looked like.
    */
-  endCycle() {
+  endCycle(stats: FetchStats): void {
+    for (let i = 0; i < stats.truncated; i++) this.#note('thin');
+    for (let i = 0; i < stats.full; i++) this.#note('ok');
+
     if (this.#recent.at(-1) === 'block') return;
 
     // Truncation is NOT a load signal: it shows up on the very first request of
@@ -174,18 +132,16 @@ export class RateGovernor {
     }
 
     this.#cleanStreak++;
-    if (this.#cleanStreak >= this.cleanCyclesToSpeedUp) {
+    if (this.#cleanStreak >= this.#cleanCyclesToSpeedUp) {
       this.#cleanStreak = 0;
       this.#interval = clamp(this.#interval - this.#stepMs, this.#min, this.#max);
     }
   }
 
-  snapshot() {
+  snapshot(): GovernorSnapshot {
     return {
       intervalMs: this.#interval,
       minIntervalMs: this.#min,
-      maxIntervalMs: this.#max,
-      requestsPerMin: Math.round(this.bucket.ratePerMin * 10) / 10,
       truncationRate: Math.round(this.truncationRate * 100) / 100,
       pausedUntil: this.#pausedUntil || null,
       atFloor: this.#interval <= this.#min,

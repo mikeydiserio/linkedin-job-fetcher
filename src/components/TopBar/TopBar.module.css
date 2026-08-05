@@ -1,0 +1,134 @@
+.bar {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  background: color-mix(in srgb, var(--bg) 85%, transparent);
+  backdrop-filter: blur(8px);
+  border-bottom: 1px solid var(--border);
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.title {
+  font-size: 15px;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+.pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  flex-shrink: 0;
+}
+
+.pulse[data-phase='polling'] {
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.pulse[data-phase='waiting'] {
+  background: var(--success);
+}
+
+.pulse[data-phase='rate-limited'] {
+  background: var(--warning);
+}
+
+.pulse[data-phase='error'] {
+  background: var(--danger);
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.4;
+    transform: scale(0.75);
+  }
+}
+
+.badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--accent-dim);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.rate,
+.status {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.status[data-phase='rate-limited'] {
+  color: var(--warning);
+}
+
+.status[data-phase='error'] {
+  color: var(--danger);
+}
+
+.button,
+.ghost {
+  padding: 6px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-strong);
+  background: var(--bg-elevated);
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background 0.15s ease, opacity 0.15s ease;
+}
+
+.button:hover:not(:disabled),
+.ghost:hover {
+  background: var(--border);
+}
+
+.button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.ghost {
+  background: transparent;
+  color: var(--accent);
+  border-color: var(--accent-dim);
+}
+
+@media (max-width: 640px) {
+  .rate {
+    display: none;
+  }
+}
