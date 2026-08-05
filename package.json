@@ -1,0 +1,27 @@
+{
+  "name": "job-fetcher",
+  "version": "2.0.0",
+  "description": "Watch LinkedIn job postings for new listings in a given location and surface them the moment they drop.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"node --watch src/server.js\" \"vite\"",
+    "build": "vite build",
+    "start": "npm run build && node src/server.js",
+    "serve": "node src/server.js",
+    "probe": "node scripts/probe.js",
+    "test": "node scripts/test-governor.js"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "cheerio": "^1.0.0",
+    "express": "^4.21.2",
+    "node-notifier": "^10.0.1"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "vite": "^6.0.7"
+  }
+}
